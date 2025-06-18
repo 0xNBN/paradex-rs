@@ -21,7 +21,7 @@ starknet-core = {git = "https://github.com/0xNBN/starknet-rs"}
 starknet-crypto = {git = "https://github.com/0xNBN/starknet-rs"}
 starknet-signers = {git = "https://github.com/0xNBN/starknet-rs"}
 thiserror = "2.0.12"
-tokio = { version = "1.45.1", features=["full"]}
+tokio = { version = "1.21.2", features=["full"]}
 tokio-tungstenite = {version = "0.27.0", features=["native-tls"]}
 
 [dev-dependencies]
