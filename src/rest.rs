@@ -8,6 +8,7 @@ use starknet_core::types::Felt;
 use starknet_core::utils::cairo_short_string_to_felt;
 use starknet_signers::SigningKey;
 use tokio::sync::RwLock;
+use tokio::sync::watch::{self, Receiver};
 
 use crate::error::{Error, Result};
 use crate::message::{account_address, auth_headers, sign_modify_order, sign_order};
@@ -30,6 +31,11 @@ enum Method<Body: serde::Serialize> {
     Delete,
 }
 
+#[derive(Debug, Clone)]
+pub struct JwtUpdate{
+    pub timestamp: SystemTime,
+    pub jwt: String,
+}
 /// Rest client following the paradex spec
 /// The client does not need to be wrapped in an Rc or Arc to re-use. The client can instead be Cloned which will re-use the sample internal components which are already wrapped in Arc.
 #[derive(Clone)]
@@ -38,6 +44,8 @@ pub struct Client {
     client: reqwest::Client,
     l2_chain_private_key_account: Option<(Felt, SigningKey, Felt)>,
     jwt: Arc<RwLock<(SystemTime, String)>>, // the current valid JWT and timestamp created
+    jwt_receiver:Receiver<JwtUpdate>,
+    jwt_sender: watch::Sender<JwtUpdate>,
 }
 
 impl Client {
@@ -57,6 +65,7 @@ impl Client {
     /// If the client cannot be created
     ///
     pub async fn new(url: URL, l2_private_key_hex_str: Option<String>) -> Result<Self> {
+        
         Self::with_client(reqwest::Client::new(), url, l2_private_key_hex_str).await
     }
 
@@ -81,11 +90,20 @@ impl Client {
         url: URL,
         l2_private_key_hex_str: Option<String>,
     ) -> Result<Self> {
+
+        let starting_jwt = JwtUpdate {
+            timestamp: SystemTime::now(),
+            jwt: "Starting_jwt".to_string(),
+        };
+        let (sender_cex_balance_changes, mut receiver_cex_balances_changes) =
+        watch::channel(starting_jwt);
         let mut new_client = Self {
             url,
             client,
             l2_chain_private_key_account: None,
             jwt: Arc::new(RwLock::new((UNIX_EPOCH, "".to_string()))),
+            jwt_receiver: receiver_cex_balances_changes,
+            jwt_sender: sender_cex_balance_changes,
         };
         if let Some(hex_str) = l2_private_key_hex_str {
             let signing_key = SigningKey::from_secret_scalar(
@@ -109,6 +127,21 @@ impl Client {
 
             new_client.l2_chain_private_key_account = Some((chain_id, signing_key, account));
         }
+        let new_client_clone = new_client.clone();
+        let new_client_clone_sender = new_client_clone.jwt_sender.clone();
+        tokio::spawn(async move {
+            loop {
+
+                let jwt=new_client_clone.jwt().await.unwrap();
+                let jwt_update=JwtUpdate {
+                    timestamp: SystemTime::now(),
+                    jwt: jwt.clone(),
+                };
+                new_client_clone_sender.send(jwt_update).unwrap();
+
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
         Ok(new_client)
     }
 
@@ -166,14 +199,20 @@ impl Client {
     /// If the token cannot be refreshed
     pub async fn jwt(&self) -> Result<String> {
         // Check if Invalid
+        /* 
         if self.check_jwt_expired().await {
             self.refresh_jwt(false).await?;
         }
-
+        */
+        let jwt_async_update = self.jwt_receiver.borrow().clone();
+        
         // Return JWT
+        /* 
         let lock = self.jwt.read().await;
         let (_ts, jwt) = &*lock;
-        Ok(jwt.clone())
+        */
+
+        Ok(jwt_async_update.jwt.clone())
     }
 
     /// Check if the current JWT token is expired
